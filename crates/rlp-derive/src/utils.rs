@@ -20,6 +20,7 @@ pub(crate) struct StructAttrs {
     pub(crate) post_encode_with: Option<syn::Path>,
     pub(crate) pre_decode_with: Option<syn::Path>,
     pub(crate) post_decode_with: Option<syn::Path>,
+    pub(crate) nolist: bool,
 }
 
 pub(crate) fn parse_struct<'a>(
@@ -107,7 +108,9 @@ pub(crate) fn parse_struct_attrs(ast: &syn::DeriveInput) -> Result<StructAttrs> 
         };
 
         meta.parse_nested_meta(|meta| {
-            if meta.path.is_ident("pre_encode_with") {
+            if meta.path.is_ident("nolist") {
+                attrs.nolist = true;
+            } else if meta.path.is_ident("pre_encode_with") {
                 let value = meta.value()?;
                 let path = value.parse::<syn::Path>()?;
                 if attrs.pre_encode_with.replace(path).is_some() {

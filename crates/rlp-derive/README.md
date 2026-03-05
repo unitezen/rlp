@@ -50,6 +50,7 @@ The derive adds both hook lengths into the list payload length, then calls
 
 For `RlpDecodable`, you can also define struct-level decode hooks:
 
+- `#[rlp(nolist)]` (decode fields directly, without an outer RLP list header)
 - `#[rlp(pre_decode_with = path)]`
 - `#[rlp(post_decode_with = path)]`
 

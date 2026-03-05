@@ -35,7 +35,7 @@ pub(crate) fn impl_decodable(ast: &syn::DeriveInput) -> Result<TokenStream> {
             return Err(Error::new_spanned(field, msg));
         }
 
-        decode_stmts.push(decodable_field(i, field, &attrs, is_opt));
+        decode_stmts.push(decodable_field(i, field, &attrs, is_opt, struct_attrs.nolist));
     }
 
     let name = &ast.ident;
@@ -43,6 +43,45 @@ pub(crate) fn impl_decodable(ast: &syn::DeriveInput) -> Result<TokenStream> {
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     let pre_decode = struct_attrs.pre_decode_with.map(|path| quote! { #path(b)?; });
     let post_decode = struct_attrs.post_decode_with.map(|path| quote! { #path(b)?; });
+    let decode_body = if struct_attrs.nolist {
+        quote! {
+            let this = Self {
+                #(#decode_stmts)*
+            };
+
+            #post_decode
+
+            Ok(this)
+        }
+    } else {
+        quote! {
+            let alloy_rlp::Header { list, payload_length } = alloy_rlp::Header::decode(b)?;
+            if !list {
+                return Err(alloy_rlp::Error::UnexpectedString);
+            }
+
+            let started_len = b.len();
+            if started_len < payload_length {
+                return Err(alloy_rlp::DecodeError::InputTooShort);
+            }
+
+            let this = Self {
+                #(#decode_stmts)*
+            };
+
+            let consumed = started_len - b.len();
+            if consumed != payload_length {
+                return Err(alloy_rlp::Error::ListLengthMismatch {
+                    expected: payload_length,
+                    got: consumed,
+                });
+            }
+
+            #post_decode
+
+            Ok(this)
+        }
+    };
 
     Ok(quote! {
         const _: () = {
@@ -53,31 +92,7 @@ pub(crate) fn impl_decodable(ast: &syn::DeriveInput) -> Result<TokenStream> {
                 fn decode(b: &mut &[u8]) -> alloy_rlp::Result<Self> {
                     #pre_decode
 
-                    let alloy_rlp::Header { list, payload_length } = alloy_rlp::Header::decode(b)?;
-                    if !list {
-                        return Err(alloy_rlp::Error::UnexpectedString);
-                    }
-
-                    let started_len = b.len();
-                    if started_len < payload_length {
-                        return Err(alloy_rlp::DecodeError::InputTooShort);
-                    }
-
-                    let this = Self {
-                        #(#decode_stmts)*
-                    };
-
-                    let consumed = started_len - b.len();
-                    if consumed != payload_length {
-                        return Err(alloy_rlp::Error::ListLengthMismatch {
-                            expected: payload_length,
-                            got: consumed,
-                        });
-                    }
-
-                    #post_decode
-
-                    Ok(this)
+                    #decode_body
                 }
             }
         };
@@ -115,6 +130,7 @@ fn decodable_field(
     field: &syn::Field,
     attrs: &crate::utils::FieldAttrs,
     is_opt: bool,
+    nolist: bool,
 ) -> TokenStream {
     let ident = field_ident(index, field);
     let decoded = attrs
@@ -126,17 +142,32 @@ fn decodable_field(
     if attrs.default {
         quote! { #ident: alloy_rlp::private::Default::default(), }
     } else if is_opt {
-        quote! {
-            #ident: if started_len - b.len() < payload_length {
-                if alloy_rlp::private::Option::map_or(b.first(), false, |b| *b == #EMPTY_STRING_CODE) {
-                    alloy_rlp::Buf::advance(b, 1);
-                    None
+        if nolist {
+            quote! {
+                #ident: if !b.is_empty() {
+                    if alloy_rlp::private::Option::map_or(b.first(), false, |b| *b == #EMPTY_STRING_CODE) {
+                        alloy_rlp::Buf::advance(b, 1);
+                        None
+                    } else {
+                        Some(#decoded(b)?)
+                    }
                 } else {
-                    Some(#decoded(b)?)
-                }
-            } else {
-                None
-            },
+                    None
+                },
+            }
+        } else {
+            quote! {
+                #ident: if started_len - b.len() < payload_length {
+                    if alloy_rlp::private::Option::map_or(b.first(), false, |b| *b == #EMPTY_STRING_CODE) {
+                        alloy_rlp::Buf::advance(b, 1);
+                        None
+                    } else {
+                        Some(#decoded(b)?)
+                    }
+                } else {
+                    None
+                },
+            }
         }
     } else {
         quote! { #ident: #decoded(b)?, }

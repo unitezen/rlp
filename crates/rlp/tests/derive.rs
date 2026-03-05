@@ -320,3 +320,43 @@ fn pre_and_post_encode_with_hooks() {
     assert_eq!(out, vec![0xc3, 0xc1, 0x07, 0x80]);
     assert_eq!(msg.length(), out.len());
 }
+
+#[test]
+fn nolist_decodable() {
+    #[derive(RlpDecodable, PartialEq, Debug)]
+    #[rlp(nolist)]
+    struct Msg {
+        a: u64,
+        b: u64,
+    }
+
+    let mut input = [0x01, 0x02].as_slice();
+    let decoded = Msg::decode(&mut input).unwrap();
+    assert_eq!(decoded, Msg { a: 1, b: 2 });
+    assert!(input.is_empty());
+}
+
+#[test]
+fn nolist_decodable_with_optional() {
+    #[derive(RlpDecodable, PartialEq, Debug)]
+    #[rlp(nolist, trailing)]
+    struct Msg {
+        a: u64,
+        b: Option<u64>,
+    }
+
+    let mut input = [0x01].as_slice();
+    let decoded = Msg::decode(&mut input).unwrap();
+    assert_eq!(decoded, Msg { a: 1, b: None });
+    assert!(input.is_empty());
+
+    let mut input = [0x01, 0x02].as_slice();
+    let decoded = Msg::decode(&mut input).unwrap();
+    assert_eq!(decoded, Msg { a: 1, b: Some(2) });
+    assert!(input.is_empty());
+
+    let mut input = [0x01, 0x80].as_slice();
+    let decoded = Msg::decode(&mut input).unwrap();
+    assert_eq!(decoded, Msg { a: 1, b: None });
+    assert!(input.is_empty());
+}
