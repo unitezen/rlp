@@ -132,3 +132,84 @@ fn skip_field() {
     let decoded = WithoutSkip::decode(&mut buf.as_slice()).unwrap();
     assert_eq!(decoded.value, 42);
 }
+
+#[test]
+fn with_attr_roundtrip() {
+    mod compat_type {
+        #[derive(Clone, PartialEq, Debug)]
+        pub(super) struct RemoteType(pub u64);
+
+        pub(super) fn encode(v: &RemoteType, out: &mut dyn alloy_rlp::BufMut) {
+            alloy_rlp::Encodable::encode(&v.0, out);
+        }
+
+        pub(super) fn length(v: &RemoteType) -> usize {
+            alloy_rlp::Encodable::length(&v.0)
+        }
+
+        pub(super) fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<RemoteType> {
+            Ok(RemoteType(alloy_rlp::Decodable::decode(buf)?))
+        }
+    }
+
+    #[derive(RlpEncodable, RlpDecodable, PartialEq, Debug)]
+    struct Msg {
+        #[rlp(with = compat_type)]
+        remote: compat_type::RemoteType,
+    }
+
+    let msg = Msg { remote: compat_type::RemoteType(7) };
+    let mut buf = Vec::new();
+    msg.encode(&mut buf);
+    let decoded = Msg::decode(&mut buf.as_slice()).unwrap();
+    assert_eq!(decoded, msg);
+}
+
+#[test]
+fn with_attr_encodable_only() {
+    mod compat_type {
+        #[derive(Clone, PartialEq, Debug)]
+        pub(super) struct RemoteType(pub u64);
+
+        pub(super) fn encode(v: &RemoteType, out: &mut dyn alloy_rlp::BufMut) {
+            alloy_rlp::Encodable::encode(&v.0, out);
+        }
+
+        pub(super) fn length(v: &RemoteType) -> usize {
+            alloy_rlp::Encodable::length(&v.0)
+        }
+    }
+
+    #[derive(RlpEncodable)]
+    struct Msg {
+        #[rlp(with = compat_type)]
+        remote: compat_type::RemoteType,
+    }
+
+    let msg = Msg { remote: compat_type::RemoteType(7) };
+    let mut buf = Vec::new();
+    msg.encode(&mut buf);
+    assert_eq!(buf, vec![0xc1, 0x07]);
+}
+
+#[test]
+fn with_attr_decodable_only() {
+    mod compat_type {
+        #[derive(Clone, PartialEq, Debug)]
+        pub(super) struct RemoteType(pub u64);
+
+        pub(super) fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<RemoteType> {
+            Ok(RemoteType(alloy_rlp::Decodable::decode(buf)?))
+        }
+    }
+
+    #[derive(RlpDecodable, PartialEq, Debug)]
+    struct Msg {
+        #[rlp(with = compat_type)]
+        remote: compat_type::RemoteType,
+    }
+
+    let mut input = [0xc1, 0x07].as_slice();
+    let decoded = Msg::decode(&mut input).unwrap();
+    assert_eq!(decoded, Msg { remote: compat_type::RemoteType(7) });
+}

@@ -1,5 +1,6 @@
 use crate::utils::{
-    attributes_include, field_ident, is_optional, make_generics, parse_struct, EMPTY_STRING_CODE,
+    attributes_include, field_ident, is_optional, make_generics, parse_field_attrs, parse_struct,
+    EMPTY_STRING_CODE,
 };
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -8,13 +9,18 @@ use syn::{Error, Result};
 pub(crate) fn impl_decodable(ast: &syn::DeriveInput) -> Result<TokenStream> {
     let body = parse_struct(ast, "RlpDecodable")?;
 
-    let fields = body.fields.iter().enumerate();
+    let fields = body
+        .fields
+        .iter()
+        .enumerate()
+        .map(|(index, field)| Ok((index, field, parse_field_attrs(field)?)))
+        .collect::<Result<Vec<_>>>()?;
 
     let supports_trailing_opt = attributes_include(&ast.attrs, "trailing");
 
     let mut encountered_opt_item = false;
     let mut decode_stmts = Vec::with_capacity(body.fields.len());
-    for (i, field) in fields {
+    for (i, field, attrs) in fields {
         let is_opt = is_optional(field);
         if is_opt {
             if !supports_trailing_opt {
@@ -22,13 +28,13 @@ pub(crate) fn impl_decodable(ast: &syn::DeriveInput) -> Result<TokenStream> {
                 return Err(Error::new_spanned(field, msg));
             }
             encountered_opt_item = true;
-        } else if encountered_opt_item && !attributes_include(&field.attrs, "default") {
+        } else if encountered_opt_item && !attrs.default {
             let msg =
                 "all the fields after the first optional field must be either optional or default";
             return Err(Error::new_spanned(field, msg));
         }
 
-        decode_stmts.push(decodable_field(i, field, is_opt));
+        decode_stmts.push(decodable_field(i, field, &attrs, is_opt));
     }
 
     let name = &ast.ident;
@@ -97,10 +103,20 @@ pub(crate) fn impl_decodable_wrapper(ast: &syn::DeriveInput) -> Result<TokenStre
     })
 }
 
-fn decodable_field(index: usize, field: &syn::Field, is_opt: bool) -> TokenStream {
+fn decodable_field(
+    index: usize,
+    field: &syn::Field,
+    attrs: &crate::utils::FieldAttrs,
+    is_opt: bool,
+) -> TokenStream {
     let ident = field_ident(index, field);
+    let decoded = attrs
+        .with
+        .as_ref()
+        .map(|with| quote! { #with::decode })
+        .unwrap_or_else(|| quote! { alloy_rlp::Decodable::decode });
 
-    if attributes_include(&field.attrs, "default") {
+    if attrs.default {
         quote! { #ident: alloy_rlp::private::Default::default(), }
     } else if is_opt {
         quote! {
@@ -109,13 +125,13 @@ fn decodable_field(index: usize, field: &syn::Field, is_opt: bool) -> TokenStrea
                     alloy_rlp::Buf::advance(b, 1);
                     None
                 } else {
-                    Some(alloy_rlp::Decodable::decode(b)?)
+                    Some(#decoded(b)?)
                 }
             } else {
                 None
             },
         }
     } else {
-        quote! { #ident: alloy_rlp::Decodable::decode(b)?, }
+        quote! { #ident: #decoded(b)?, }
     }
 }

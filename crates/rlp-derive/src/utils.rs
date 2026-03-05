@@ -7,6 +7,13 @@ use syn::{
 
 pub(crate) const EMPTY_STRING_CODE: u8 = 0x80;
 
+#[derive(Clone, Default)]
+pub(crate) struct FieldAttrs {
+    pub(crate) default: bool,
+    pub(crate) skip: bool,
+    pub(crate) with: Option<syn::Path>,
+}
+
 pub(crate) fn parse_struct<'a>(
     ast: &'a syn::DeriveInput,
     derive_attr: &str,
@@ -39,6 +46,44 @@ pub(crate) fn attributes_include(attrs: &[Attribute], attr_name: &str) -> bool {
         }
     }
     false
+}
+
+pub(crate) fn parse_field_attrs(field: &Field) -> Result<FieldAttrs> {
+    let mut attrs = FieldAttrs::default();
+
+    for attr in &field.attrs {
+        if !attr.path().is_ident("rlp") {
+            continue;
+        }
+
+        let Meta::List(meta) = &attr.meta else {
+            continue;
+        };
+
+        meta.parse_nested_meta(|meta| {
+            if meta.path.is_ident("default") {
+                attrs.default = true;
+                return Ok(());
+            }
+
+            if meta.path.is_ident("skip") {
+                attrs.skip = true;
+                return Ok(());
+            }
+
+            if meta.path.is_ident("with") {
+                let value = meta.value()?;
+                let path = value.parse::<syn::Path>()?;
+                if attrs.with.replace(path).is_some() {
+                    return Err(meta.error("duplicate `with` argument"));
+                }
+            }
+
+            Ok(())
+        })?;
+    }
+
+    Ok(attrs)
 }
 
 pub(crate) fn is_optional(field: &Field) -> bool {

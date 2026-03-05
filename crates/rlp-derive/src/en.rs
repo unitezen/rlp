@@ -1,5 +1,6 @@
 use crate::utils::{
-    attributes_include, field_ident, is_optional, make_generics, parse_struct, EMPTY_STRING_CODE,
+    attributes_include, field_ident, is_optional, make_generics, parse_field_attrs, parse_struct,
+    EMPTY_STRING_CODE,
 };
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -9,12 +10,13 @@ use syn::{Error, Result};
 pub(crate) fn impl_encodable(ast: &syn::DeriveInput) -> Result<TokenStream> {
     let body = parse_struct(ast, "RlpEncodable")?;
 
-    let mut fields = body
+    let fields = body
         .fields
         .iter()
         .enumerate()
-        .filter(|(_, field)| !attributes_include(&field.attrs, "skip"))
-        .peekable();
+        .map(|(index, field)| Ok((index, field, parse_field_attrs(field)?)))
+        .collect::<Result<Vec<_>>>()?;
+    let fields = fields.into_iter().filter(|(_, _, attrs)| !attrs.skip).collect::<Vec<_>>();
 
     let supports_trailing_opt = attributes_include(&ast.attrs, "trailing");
 
@@ -22,7 +24,7 @@ pub(crate) fn impl_encodable(ast: &syn::DeriveInput) -> Result<TokenStream> {
     let mut length_exprs = Vec::with_capacity(body.fields.len());
     let mut encode_exprs = Vec::with_capacity(body.fields.len());
 
-    while let Some((i, field)) = fields.next() {
+    for (field_idx, (i, field, attrs)) in fields.iter().enumerate() {
         let is_opt = is_optional(field);
         if is_opt {
             if !supports_trailing_opt {
@@ -35,8 +37,13 @@ pub(crate) fn impl_encodable(ast: &syn::DeriveInput) -> Result<TokenStream> {
             return Err(Error::new_spanned(field, msg));
         }
 
-        length_exprs.push(encodable_length(i, field, is_opt, fields.clone()));
-        encode_exprs.push(encodable_field(i, field, is_opt, fields.clone()));
+        let remaining =
+            fields.iter().skip(field_idx + 1).map(|(index, field, _)| (*index, *field)).peekable();
+        length_exprs.push(encodable_length(*i, field, attrs.with.as_ref(), is_opt, remaining));
+
+        let remaining =
+            fields.iter().skip(field_idx + 1).map(|(index, field, _)| (*index, *field)).peekable();
+        encode_exprs.push(encodable_field(*i, field, attrs.with.as_ref(), is_opt, remaining));
     }
 
     let name = &ast.ident;
@@ -161,10 +168,14 @@ pub(crate) fn impl_max_encoded_len(ast: &syn::DeriveInput) -> Result<TokenStream
 fn encodable_length<'a>(
     index: usize,
     field: &syn::Field,
+    with: Option<&syn::Path>,
     is_opt: bool,
     mut remaining: Peekable<impl Iterator<Item = (usize, &'a syn::Field)>>,
 ) -> TokenStream {
     let ident = field_ident(index, field);
+    let encoded_len = with
+        .map(|with| quote! { #with::length })
+        .unwrap_or_else(|| quote! { alloy_rlp::Encodable::length });
 
     if is_opt {
         let default = if remaining.peek().is_some() {
@@ -174,24 +185,28 @@ fn encodable_length<'a>(
             quote! { 0 }
         };
 
-        quote! { self.#ident.as_ref().map(|val| alloy_rlp::Encodable::length(val)).unwrap_or(#default) }
+        quote! { self.#ident.as_ref().map(|val| #encoded_len(val)).unwrap_or(#default) }
     } else {
-        quote! { alloy_rlp::Encodable::length(&self.#ident) }
+        quote! { #encoded_len(&self.#ident) }
     }
 }
 
 fn encodable_field<'a>(
     index: usize,
     field: &syn::Field,
+    with: Option<&syn::Path>,
     is_opt: bool,
     mut remaining: Peekable<impl Iterator<Item = (usize, &'a syn::Field)>>,
 ) -> TokenStream {
     let ident = field_ident(index, field);
+    let encoded = with
+        .map(|with| quote! { #with::encode })
+        .unwrap_or_else(|| quote! { alloy_rlp::Encodable::encode });
 
     if is_opt {
         let if_some_encode = quote! {
             if let Some(val) = self.#ident.as_ref() {
-                alloy_rlp::Encodable::encode(val, out)
+                #encoded(val, out)
             }
         };
 
@@ -207,7 +222,7 @@ fn encodable_field<'a>(
             quote! { #if_some_encode }
         }
     } else {
-        quote! { alloy_rlp::Encodable::encode(&self.#ident, out); }
+        quote! { #encoded(&self.#ident, out); }
     }
 }
 
