@@ -31,6 +31,23 @@ Only the functions needed by the derived trait are required:
 - `RlpEncodable` needs `path::encode` and `path::length`
 - `RlpDecodable` needs `path::decode`
 
+For `RlpEncodable`, you can also define struct-level encode hooks:
+
+- `#[rlp(pre_encode_with = path)]`
+- `#[rlp(post_encode_with = path)]`
+
+The hook module must provide:
+
+```rust
+fn length<T>(value: &T, inner_payload_length: usize) -> usize
+fn encode<T>(value: &T, inner_payload_length: usize, out: &mut dyn alloy_rlp::BufMut)
+```
+
+`inner_payload_length` is the derived struct payload size before encode hooks.
+The derive adds both hook lengths into the list payload length, then calls
+`pre_encode_with::encode`, encodes fields, and finally calls
+`post_encode_with::encode`.
+
 For `RlpDecodable`, you can also define struct-level decode hooks:
 
 - `#[rlp(pre_decode_with = path)]`

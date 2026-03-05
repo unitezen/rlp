@@ -16,6 +16,8 @@ pub(crate) struct FieldAttrs {
 
 #[derive(Clone, Default)]
 pub(crate) struct StructAttrs {
+    pub(crate) pre_encode_with: Option<syn::Path>,
+    pub(crate) post_encode_with: Option<syn::Path>,
     pub(crate) pre_decode_with: Option<syn::Path>,
     pub(crate) post_decode_with: Option<syn::Path>,
 }
@@ -105,7 +107,19 @@ pub(crate) fn parse_struct_attrs(ast: &syn::DeriveInput) -> Result<StructAttrs> 
         };
 
         meta.parse_nested_meta(|meta| {
-            if meta.path.is_ident("pre_decode_with") {
+            if meta.path.is_ident("pre_encode_with") {
+                let value = meta.value()?;
+                let path = value.parse::<syn::Path>()?;
+                if attrs.pre_encode_with.replace(path).is_some() {
+                    return Err(meta.error("duplicate `pre_encode_with` argument"));
+                }
+            } else if meta.path.is_ident("post_encode_with") {
+                let value = meta.value()?;
+                let path = value.parse::<syn::Path>()?;
+                if attrs.post_encode_with.replace(path).is_some() {
+                    return Err(meta.error("duplicate `post_encode_with` argument"));
+                }
+            } else if meta.path.is_ident("pre_decode_with") {
                 let value = meta.value()?;
                 let path = value.parse::<syn::Path>()?;
                 if attrs.pre_decode_with.replace(path).is_some() {

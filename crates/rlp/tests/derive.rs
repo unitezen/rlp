@@ -268,3 +268,55 @@ fn post_decode_with_hook() {
     assert_eq!(decoded, Msg { value: 7 });
     assert_eq!(POST_HOOK_CALLS.load(Ordering::SeqCst), 1);
 }
+
+mod pre_encode_inner_list {
+    pub(super) fn length<T>(_: &T, inner_payload_length: usize) -> usize {
+        alloy_rlp::length_of_length(inner_payload_length)
+    }
+
+    pub(super) fn encode<T>(_: &T, inner_payload_length: usize, out: &mut dyn alloy_rlp::BufMut) {
+        alloy_rlp::Header { list: true, payload_length: inner_payload_length }.encode(out);
+    }
+}
+
+mod post_encode_empty_string {
+    pub(super) fn length<T>(_: &T, _: usize) -> usize {
+        1
+    }
+
+    pub(super) fn encode<T>(_: &T, _: usize, out: &mut dyn alloy_rlp::BufMut) {
+        out.put_u8(0x80);
+    }
+}
+
+#[test]
+fn pre_encode_with_hook() {
+    #[derive(RlpEncodable)]
+    #[rlp(pre_encode_with = pre_encode_inner_list)]
+    struct Msg {
+        value: u64,
+    }
+
+    let msg = Msg { value: 7 };
+    let mut out = Vec::new();
+    msg.encode(&mut out);
+
+    assert_eq!(out, vec![0xc2, 0xc1, 0x07]);
+    assert_eq!(msg.length(), out.len());
+}
+
+#[test]
+fn pre_and_post_encode_with_hooks() {
+    #[derive(RlpEncodable)]
+    #[rlp(pre_encode_with = pre_encode_inner_list, post_encode_with = post_encode_empty_string)]
+    struct Msg {
+        value: u64,
+    }
+
+    let msg = Msg { value: 7 };
+    let mut out = Vec::new();
+    msg.encode(&mut out);
+
+    assert_eq!(out, vec![0xc3, 0xc1, 0x07, 0x80]);
+    assert_eq!(msg.length(), out.len());
+}

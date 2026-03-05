@@ -1,6 +1,6 @@
 use crate::utils::{
     attributes_include, field_ident, is_optional, make_generics, parse_field_attrs, parse_struct,
-    EMPTY_STRING_CODE,
+    parse_struct_attrs, EMPTY_STRING_CODE,
 };
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -9,6 +9,7 @@ use syn::{Error, Result};
 
 pub(crate) fn impl_encodable(ast: &syn::DeriveInput) -> Result<TokenStream> {
     let body = parse_struct(ast, "RlpEncodable")?;
+    let struct_attrs = parse_struct_attrs(ast)?;
 
     let fields = body
         .fields
@@ -49,6 +50,24 @@ pub(crate) fn impl_encodable(ast: &syn::DeriveInput) -> Result<TokenStream> {
     let name = &ast.ident;
     let generics = make_generics(&ast.generics, quote!(alloy_rlp::Encodable));
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    let pre_encode_length = struct_attrs
+        .pre_encode_with
+        .as_ref()
+        .map(|path| quote! { #path::length(self, inner_payload_length) })
+        .unwrap_or_else(|| quote! { 0usize });
+    let post_encode_length = struct_attrs
+        .post_encode_with
+        .as_ref()
+        .map(|path| quote! { #path::length(self, inner_payload_length) })
+        .unwrap_or_else(|| quote! { 0usize });
+    let pre_encode = struct_attrs
+        .pre_encode_with
+        .as_ref()
+        .map(|path| quote! { #path::encode(self, inner_payload_length, out); });
+    let post_encode = struct_attrs
+        .post_encode_with
+        .as_ref()
+        .map(|path| quote! { #path::encode(self, inner_payload_length, out); });
 
     Ok(quote! {
         const _: () = {
@@ -57,18 +76,22 @@ pub(crate) fn impl_encodable(ast: &syn::DeriveInput) -> Result<TokenStream> {
             impl #impl_generics alloy_rlp::Encodable for #name #ty_generics #where_clause {
                 #[inline]
                 fn length(&self) -> usize {
-                    let payload_length = self._alloy_rlp_payload_length();
+                    let inner_payload_length = self._alloy_rlp_payload_length();
+                    let payload_length = inner_payload_length + #pre_encode_length + #post_encode_length;
                     payload_length + alloy_rlp::length_of_length(payload_length)
                 }
 
                 #[inline]
                 fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
+                    let inner_payload_length = self._alloy_rlp_payload_length();
                     alloy_rlp::Header {
                         list: true,
-                        payload_length: self._alloy_rlp_payload_length(),
+                        payload_length: inner_payload_length + #pre_encode_length + #post_encode_length,
                     }
                     .encode(out);
+                    #pre_encode
                     #(#encode_exprs)*
+                    #post_encode
                 }
             }
 
