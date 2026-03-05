@@ -30,3 +30,24 @@ struct Msg {
 Only the functions needed by the derived trait are required:
 - `RlpEncodable` needs `path::encode` and `path::length`
 - `RlpDecodable` needs `path::decode`
+
+For `RlpDecodable`, you can also define struct-level decode hooks:
+
+- `#[rlp(pre_decode_with = path)]`
+- `#[rlp(post_decode_with = path)]`
+
+Each hook function must have the signature:
+
+```rust
+fn hook(buf: &mut &[u8]) -> alloy_rlp::Result<()>
+```
+
+If your hook rebinds `*buf` to a subslice (for envelope unwrapping), use an
+explicit lifetime:
+
+```rust
+fn hook<'a>(buf: &mut &'a [u8]) -> alloy_rlp::Result<()>
+```
+
+`pre_decode_with` runs before list-header decoding and can rewrite/advance the
+input buffer. `post_decode_with` runs after successful payload decode.

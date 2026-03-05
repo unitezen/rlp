@@ -1,6 +1,6 @@
 use crate::utils::{
     attributes_include, field_ident, is_optional, make_generics, parse_field_attrs, parse_struct,
-    EMPTY_STRING_CODE,
+    parse_struct_attrs, EMPTY_STRING_CODE,
 };
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -8,6 +8,7 @@ use syn::{Error, Result};
 
 pub(crate) fn impl_decodable(ast: &syn::DeriveInput) -> Result<TokenStream> {
     let body = parse_struct(ast, "RlpDecodable")?;
+    let struct_attrs = parse_struct_attrs(ast)?;
 
     let fields = body
         .fields
@@ -40,6 +41,8 @@ pub(crate) fn impl_decodable(ast: &syn::DeriveInput) -> Result<TokenStream> {
     let name = &ast.ident;
     let generics = make_generics(&ast.generics, quote!(alloy_rlp::Decodable));
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    let pre_decode = struct_attrs.pre_decode_with.map(|path| quote! { #path(b)?; });
+    let post_decode = struct_attrs.post_decode_with.map(|path| quote! { #path(b)?; });
 
     Ok(quote! {
         const _: () = {
@@ -48,6 +51,8 @@ pub(crate) fn impl_decodable(ast: &syn::DeriveInput) -> Result<TokenStream> {
             impl #impl_generics alloy_rlp::Decodable for #name #ty_generics #where_clause {
                 #[inline]
                 fn decode(b: &mut &[u8]) -> alloy_rlp::Result<Self> {
+                    #pre_decode
+
                     let alloy_rlp::Header { list, payload_length } = alloy_rlp::Header::decode(b)?;
                     if !list {
                         return Err(alloy_rlp::Error::UnexpectedString);
@@ -69,6 +74,8 @@ pub(crate) fn impl_decodable(ast: &syn::DeriveInput) -> Result<TokenStream> {
                             got: consumed,
                         });
                     }
+
+                    #post_decode
 
                     Ok(this)
                 }

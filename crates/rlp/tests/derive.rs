@@ -213,3 +213,58 @@ fn with_attr_decodable_only() {
     let decoded = Msg::decode(&mut input).unwrap();
     assert_eq!(decoded, Msg { remote: compat_type::RemoteType(7) });
 }
+
+#[test]
+fn pre_decode_with_hook() {
+    #[derive(RlpDecodable, PartialEq, Debug)]
+    #[rlp(pre_decode_with = unwrap_outer)]
+    struct Msg {
+        value: u64,
+    }
+
+    fn unwrap_outer<'a>(buf: &mut &'a [u8]) -> alloy_rlp::Result<()> {
+        let outer_payload = alloy_rlp::Header::decode_bytes(buf, true)?;
+        let mut payload_cursor = outer_payload;
+        let inner_header = alloy_rlp::Header::decode(&mut payload_cursor)?;
+        if !inner_header.list {
+            return Err(alloy_rlp::Error::UnexpectedString);
+        }
+
+        let inner_len = inner_header.length_with_payload();
+        if outer_payload.len() != inner_len {
+            return Err(alloy_rlp::Error::Custom("invalid nested envelope"));
+        }
+        *buf = &outer_payload[..inner_len];
+        Ok(())
+    }
+
+    let mut input = [0xc2, 0xc1, 0x07].as_slice();
+    let decoded = Msg::decode(&mut input).unwrap();
+    assert_eq!(decoded, Msg { value: 7 });
+}
+
+#[test]
+fn post_decode_with_hook() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static POST_HOOK_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(RlpDecodable, PartialEq, Debug)]
+    #[rlp(post_decode_with = post_check)]
+    struct Msg {
+        value: u64,
+    }
+
+    fn post_check(buf: &mut &[u8]) -> alloy_rlp::Result<()> {
+        if !buf.is_empty() {
+            return Err(alloy_rlp::Error::Custom("post hook expected empty buffer"));
+        }
+        POST_HOOK_CALLS.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    let mut input = [0xc1, 0x07].as_slice();
+    let decoded = Msg::decode(&mut input).unwrap();
+    assert_eq!(decoded, Msg { value: 7 });
+    assert_eq!(POST_HOOK_CALLS.load(Ordering::SeqCst), 1);
+}
